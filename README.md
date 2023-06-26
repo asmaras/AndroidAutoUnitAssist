@@ -1,7 +1,6 @@
 # AndroidAutoUnitAssist
 
-This is an assistant to help overcome some flaws of the Road Top Carplay and Android Auto unit
-It is specifically designed for the CIC unit
+An assistant to help overcome some flaws of the Road Top Carplay and Android Auto unit. It is specifically designed for the BMW/Mini CIC unit
 
 The unit automatically switches between the original iDrive screen and it's own screen. It suffers from some flaws however in a few scenario's
 
@@ -81,7 +80,7 @@ Detection of \*menu\* level:
   \
   Detection will be cancelled when the screen switches to [unit] or when the cam enable input is active
   \
-  [unit] means that the unit switched to it's own output. In that case it's probable that *CP/AA* is being generated making detection of the *menu* level impossible
+  [unit] means that the unit switched to it's own output. In that case it's probable that \*CP/AA\* is being generated making detection of the \*menu\* level impossible
   \
   When cam enable is active the camera is displayed, also making detection impossible
 
