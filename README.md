@@ -1,8 +1,10 @@
 # AndroidAutoUnitAssist
 
+**Note** Development is currently being done and code will be committed in the coming weeks when the device does something sensible. Reverse engineering of the CAN bus is being done to find some extra CAN IDs in addition to the CanWalkAndLock project https://github.com/asmaras/CanWalkAndLock.
+
 An assistant to help overcome some flaws of the Road Top Carplay and Android Auto unit. It is specifically designed for the BMW/Mini CIC unit
 
-The unit automatically switches between the original iDrive screen and it's own screen. It suffers from some flaws however in a few scenario's
+The unit automatically switches between the original iDrive screen and it's own screen. It suffers from some flaws however in a few scenarios
 
 ## Fail scenarios
 
@@ -27,7 +29,7 @@ To assist the unit in making the correct screen switches, we connect the followi
   Analog inputs. Each color has an RC filter to obtain an average value for a coarse detection of what's being displayed
 - audio
   \
-  Analog input for a single audio channel. It is offset, rectified and filtered to be able to detect of audio is being played
+  Analog input for a single audio channel. It is offset, rectified and filtered to be able to detect if audio is being played
 - screen switch selection
   \
   A digital input showing the unit's selection for the screen switch ([idrive] or [unit])
@@ -114,3 +116,5 @@ Pinout of JST connectors to assistant (6 + 5 pins):
 \
 <img src="AndroidAutoUnitAssistConnections.jpg" alt="Connections" width="600"/>
 <img src="AndroidAutoUnitAssistBoard.jpg" alt="Board" width="600"/>
+<img src="AndroidAutoUnitAssistBoard2.jpg" alt="Board" width="600"/>
+<img src="AndroidAutoUnitAssistBoard3.jpg" alt="Board" width="600"/>
