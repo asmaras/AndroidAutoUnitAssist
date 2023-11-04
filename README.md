@@ -14,7 +14,7 @@ In the following text, these conventions are used:
 - [cam] = same as [unit], while reverse or front camera is being displayed
 - long-press home button switches screen
 
-Example fail scenario's:
+Example fail scenarios:
 - Unlock the car -> [idrive] -> phone connects -> [unit] -> turn on ignition -> [idrive]
 In this scenario the unit assumes the screen is still switched to [unit]. So if you long-press the home button it will switch to [idrive] which was already active, and nothing happens. The next long-press will switch over to [unit]
 - [idrive] -> turn on ignition -> put gear in reverse -> [cam] -> phone connects while in reverse -> take gear out of reverse -> [idrive]
