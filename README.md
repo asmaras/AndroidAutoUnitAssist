@@ -2,9 +2,9 @@
 
 **Note** Development is currently being done and code will be committed in the coming weeks when the device does something sensible. Reverse engineering of the CAN bus is being done to find some extra CAN IDs in addition to the CanWalkAndLock project https://github.com/asmaras/CanWalkAndLock.
 
-An assistant to help overcome some flaws of the Road Top Carplay and Android Auto unit. It is specifically designed for the BMW/Mini CIC unit
+An assistant to help overcome some flaws of the Road Top Carplay and Android Auto unit. It is specifically designed for the BMW/Mini CIC unit.
 
-The unit automatically switches between the original iDrive screen and it's own screen. It suffers from some flaws however in a few scenarios
+The unit automatically switches between the original iDrive screen and it's own screen. It suffers from some flaws however in a few scenarios.
 
 ## Fail scenarios
 
@@ -16,7 +16,8 @@ In the following text, these conventions are used:
 
 Example fail scenarios:
 - Unlock the car -> [idrive] -> phone connects -> [unit] -> turn on ignition -> [idrive]
-In this scenario the unit assumes the screen is still switched to [unit]. So if you long-press the home button it will switch to [idrive] which was already active, and nothing happens. The next long-press will switch over to [unit]
+  \
+  In this scenario the unit assumes the screen is still switched to [unit]. So if you long-press the home button it will switch to [idrive] which was already active, and nothing happens. The next long-press will switch over to [unit]
 - [idrive] -> turn on ignition -> put gear in reverse -> [cam] -> phone connects while in reverse -> take gear out of reverse -> [idrive]
   \
   Here the unit should switch to [unit] because the phone is connected, however it doesn't. A long-press will switch over to [unit]
@@ -88,7 +89,7 @@ Detection of \*menu\* level:
 
 # Hardware
 
-Below is a description of the connections between the unit and the assistant board, along with some pictures of the actual situation
+Below is a description of the connections between the unit and the assistant board, along with some pictures of the actual situation.
 
 Hooking up the I/Os to the unit:
 |I/O|Location|
