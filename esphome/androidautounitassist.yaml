@@ -28,6 +28,7 @@ logger:
 api:
   encryption:
     key: xxxxxxxxxxxxxxxxx
+  reboot_timeout: 0s
 
 ota:
   password: xxxxxxxxxxxxxxxxx

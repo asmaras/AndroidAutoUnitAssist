@@ -3,9 +3,11 @@
 #include <driver/adc.h>
 #include <driver/twai.h>
 #ifdef USE_ESP32_FRAMEWORK_ARDUINO
+// Enable ESP_LOGX macros for logging when built with ESPHome
 #include "esphome/core/log.h"
 using namespace esphome;
 #else
+// Note: to enable ESP_LOGX macros for logging when built with PlatformIO, add build flag -D CORE_DEBUG_LEVEL=ARDUHAL_LOG_LEVEL_DEBUG
 #include <esp_log.h>
 #endif
 #include <freertos/FreeRTOS.h>
