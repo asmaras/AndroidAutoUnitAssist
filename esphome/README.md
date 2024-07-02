@@ -10,4 +10,4 @@ To build this project with ESPHome:
 - Copy the "external_components" directory to the esphome/ directory on the Home Assistant machine
   \
   This contains a simple "external component" to jump to the actual application code. It is registered to ESPHome through the \_\_init\_\_.py file. The YAML file contains lines to actually use it when the project is being built
-- Copy the source code to esphome/external_components/android_auto_unit_assist/
+- Copy the source code to esphome/external_components/android_auto_unit_assist_component/
