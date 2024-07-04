@@ -1,5 +1,7 @@
 # AndroidAutoUnitAssist
 
+**Note** ESPHome can be used to build this project with the advantage of having a complete provisioning framework. See https://github.com/asmaras/AndroidAutoUnitAssist/tree/main/esphome.
+
 **Note** Development is currently being done and code will be committed in the coming weeks when the device does something sensible. Reverse engineering of the CAN bus is being done to find some extra CAN IDs in addition to the CanWalkAndLock project https://github.com/asmaras/CanWalkAndLock.
 
 An assistant to help overcome some flaws of the Road Top Carplay and Android Auto unit. It is specifically designed for the BMW/Mini CIC unit.
