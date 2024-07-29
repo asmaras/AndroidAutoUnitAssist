@@ -28,6 +28,8 @@ logger:
 api:
   encryption:
     key: xxxxxxxxxxxxxxxxx
+
+  # This can be a stand-alone device without a connection. Make sure it doesn't reboot if the connection fails
   reboot_timeout: 0s
 
 ota:
@@ -42,6 +44,9 @@ wifi:
   ap:
     ssid: "Androidautounitassist"
     password: xxxxxxxxxxxxxxxxx
+
+  # This can be a stand-alone device without a connection. Make sure it doesn't reboot if the connection fails
+  reboot_timeout: 0s
 
 captive_portal:
     
