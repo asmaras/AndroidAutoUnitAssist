@@ -79,4 +79,3 @@ script:
             - delay: 100ms
             - output.turn_off: programmeerbare_led
             - delay: 500ms
-            - logger.log: "Annoying log"

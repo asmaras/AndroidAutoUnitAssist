@@ -15,30 +15,70 @@ using namespace esphome;
 #include <freertos/task.h>
 #include <driver/gpio.h>
 
-void AndroidAutoUnitAssist::Setup() {
-    _processingMutex = xSemaphoreCreateMutex();
+namespace Pins {
+    // CAN
+    constexpr gpio_num_t canTx = GPIO_NUM_21;
+    constexpr gpio_num_t canRx = GPIO_NUM_22;
+    // Analog inputs
+    constexpr adc1_channel_t redAdc = ADC1_CHANNEL_0;
+    constexpr adc1_channel_t greenAdc = ADC1_CHANNEL_3;
+    constexpr adc1_channel_t blueAdc = ADC1_CHANNEL_6;
+    constexpr adc1_channel_t audioAdc = ADC1_CHANNEL_7;
+    // Digital inputs
+    constexpr gpio_num_t screenSwitchSelection = GPIO_NUM_25;
+    constexpr gpio_num_t screenSwitchControl = GPIO_NUM_26;
+    constexpr gpio_num_t cameraEnable = GPIO_NUM_27;
+};
 
+AndroidAutoUnitAssist::AndroidAutoUnitAssist() {
+    _processingMutex = xSemaphoreCreateMutex();
+}
+
+void AndroidAutoUnitAssist::Setup() {
+    // Configure the analog inputs
     adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_0);
-    adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_0);
-    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_0);
-    adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_DB_0);
+    adc1_config_channel_atten(Pins::redAdc, ADC_ATTEN_DB_0);
+    adc1_config_channel_atten(Pins::greenAdc, ADC_ATTEN_DB_0);
+    adc1_config_channel_atten(Pins::blueAdc, ADC_ATTEN_DB_0);
+    adc1_config_channel_atten(Pins::audioAdc, ADC_ATTEN_DB_6);
+
+    // Configure the digital I/Os
+    gpio_config_t gpioConfig = {};
+    gpioConfig.pin_bit_mask = 1ULL << Pins::screenSwitchSelection;
+    gpioConfig.mode = GPIO_MODE_INPUT;
+    gpio_config(&gpioConfig);
+    gpioConfig.pin_bit_mask = 1ULL << Pins::cameraEnable;
+    gpioConfig.mode = GPIO_MODE_INPUT;
+    gpio_config(&gpioConfig);
+    // The screenSwitchControl pin may only be an output if we need to intervene
+    // Default we set it as an input
+    gpioConfig.pin_bit_mask = 1ULL << Pins::screenSwitchControl;
+    gpioConfig.mode = GPIO_MODE_INPUT;
+    gpio_config(&gpioConfig);
 
     xTaskCreate(
-        ReadInputsTask,
-        "ReadInputsTask",
+        ReadAnalogInputsTask,
+        "ReadAnalog",
         4096,
         this,
         configMAX_PRIORITIES / 2,
         nullptr
     );
 
-    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(_pins.canTx, _pins.canRx, TWAI_MODE_NORMAL);
-    // g_config.intr_flags |= ESP_INTR_FLAG_IRAM;
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_100KBITS();
-    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+    xTaskCreate(
+        ReadDigitalInputsTask,
+        "DetectUsrScrSw",
+        4096,
+        this,
+        configMAX_PRIORITIES / 2,
+        nullptr
+    );
 
-    ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
+    twai_general_config_t generalConfig = TWAI_GENERAL_CONFIG_DEFAULT(Pins::canTx, Pins::canRx, TWAI_MODE_NORMAL);
+    twai_timing_config_t timingConfig = TWAI_TIMING_CONFIG_100KBITS();
+    twai_filter_config_t filterConfig = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+    ESP_ERROR_CHECK(twai_driver_install(&generalConfig, &timingConfig, &filterConfig));
     ESP_LOGI(_logTag, "Installed TWAI driver");
 
     ESP_ERROR_CHECK(twai_start());
@@ -46,147 +86,110 @@ void AndroidAutoUnitAssist::Setup() {
 
     xTaskCreate(
         CanReceiveTask,
-        "CanReceiveTask",
+        "CanReceive",
         4096,
         this,
         configMAX_PRIORITIES / 2,
         nullptr
     );
 
-    gpio_config_t io_conf = {};
-    io_conf.pin_bit_mask = 1ULL << GPIO_NUM_2;
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1ULL << GPIO_NUM_25;
-    io_conf.mode = GPIO_MODE_INPUT;
-    gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1ULL << GPIO_NUM_26;
-    io_conf.mode = GPIO_MODE_INPUT;
-    gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1ULL << GPIO_NUM_27;
-    io_conf.mode = GPIO_MODE_INPUT;
-    gpio_config(&io_conf);
+    xTaskCreate(
+        ScreenSelectionCorrectionTask,
+        "ScreenSelCorr",
+        4096,
+        this,
+        configMAX_PRIORITIES / 2,
+        nullptr
+    );
+
+    xTaskCreate(
+        CameraScreenControlOverruleTask,
+        "CamScreenCtlOvr",
+        4096,
+        this,
+        configMAX_PRIORITIES / 2,
+        nullptr
+    );
 }
 
 void AndroidAutoUnitAssist::Loop() {
     
 }
 
-void AndroidAutoUnitAssist::ProcessEvent(EventType eventType) {
-    CpAAScreenActiveDetectionStateMachine(eventType);
+void AndroidAutoUnitAssist::ReadAnalogInputsTask(void* pvParameters) {
+    ((AndroidAutoUnitAssist*)pvParameters)->ReadAnalogInputsTask();
 }
 
-void AndroidAutoUnitAssist::CpAAScreenActiveDetectionStateMachine(EventType eventType) {
-    auto StateTransition = [&](CpAAScreenActiveDetectionState state) {
-        _cpAAScreenActiveDetectionState = state;
-        CpAAScreenActiveDetectionStateMachine(EventType::stateEntry);
-        };
+void AndroidAutoUnitAssist::ReadAnalogInputsTask() {
+    constexpr int numberOfMeasurementsPerCycle = 30;
+    constexpr int displaySamplesPerMeasurement = 25;
 
-    switch (_cpAAScreenActiveDetectionState) {
-    case CpAAScreenActiveDetectionState::start:
-        switch (eventType) {
-        case EventType::stateEntry:
-            // if (_timer2Period > 0 && _menuScreenLevel > 0) {
-            //     StartTimer(2);
-            // }
-            break;
-        case EventType::timer2Expiry:
-        case EventType::newMenuScreenLevelDetected:
-            StateTransition(CpAAScreenActiveDetectionState::detectionActive);
-            break;
-        default:
-            break;
-        }
-        break;
-    case CpAAScreenActiveDetectionState::detectionActive:
-        switch (eventType) {
-        case EventType::stateEntry:
-        case EventType::cameraEnableChanged:
-        case EventType::menuScreenActiveChanged:
-            // if (!CameraEnabled() && !MenuLevelActive()) {
-
-            // }
-            break;
-        default:
-            break;
-        }
-        break;
-    }
-}
-
-void AndroidAutoUnitAssist::StartTimer(int timerNumber) {
-    switch (timerNumber) {
-    case 2:
-        _timer2StartTime = xTaskGetTickCount();
-        break;
-    }
-}
-
-void AndroidAutoUnitAssist::ReadInputsTask(void* pvParameters) {
-    constexpr int slidingWindowSize = 1;
-    constexpr int slidingWindowGranularity = 30;
-    int redSlidingWindow[slidingWindowSize] = {};
-    int greenSlidingWindow[slidingWindowSize] = {};
-    int blueSlidingWindow[slidingWindowSize] = {};
-    int slidingWindowWriteIndex = 0;
-    int screenSwitchAtMcu = 0;
-    int screenSwitchAtRelay = 0;
-    int cameraEnable = 0;
-    int count = 0;
+    TickType_t lastLogTime = xTaskGetTickCount();
     while (true)
     {
-        //   gpio_set_level(GPIO_NUM_2, (count + 1) % 2);
-
-        redSlidingWindow[slidingWindowWriteIndex] = 0;
-        greenSlidingWindow[slidingWindowWriteIndex] = 0;
-        blueSlidingWindow[slidingWindowWriteIndex] = 0;
-        int audio = 0;
-        uint32_t readLength = 0;
-        adc_digi_output_data_t result[SamplingParameters::samplesPerRead] = {};
-        // Because of an error in the ESP32 there's a slightly different number of samples per channel
-        // It is necessary to keep count of the number of samples for each channel
-        int redSampleCount = 0;
-        int greenSampleCount = 0;
-        int blueSampleCount = 0;
-        int audioSampleCount = 0;
-        for (int measurementCount = 0; measurementCount < slidingWindowGranularity; measurementCount++)
+        int redSampleAccumulator = 0;
+        int greenSampleAccumulator = 0;
+        int blueSampleAccumulator = 0;
+        int audioSampleAccumulator = 0;
+        for (int measurementCount = 0; measurementCount < numberOfMeasurementsPerCycle; measurementCount++)
         {
-            for (int resultIndex = 0; resultIndex < 25; resultIndex++) {
-                redSlidingWindow[slidingWindowWriteIndex] += adc1_get_raw(ADC1_CHANNEL_0);
-                redSampleCount++;
-                greenSlidingWindow[slidingWindowWriteIndex] += adc1_get_raw(ADC1_CHANNEL_3);
-                greenSampleCount++;
-                blueSlidingWindow[slidingWindowWriteIndex] += adc1_get_raw(ADC1_CHANNEL_6);
-                blueSampleCount++;
+            for (int resultIndex = 0; resultIndex < displaySamplesPerMeasurement; resultIndex++) {
+                redSampleAccumulator += adc1_get_raw(Pins::redAdc);
+                greenSampleAccumulator += adc1_get_raw(Pins::greenAdc);
+                blueSampleAccumulator += adc1_get_raw(Pins::blueAdc);
             }
-            audio += adc1_get_raw(ADC1_CHANNEL_7);
-            audioSampleCount++;
+            audioSampleAccumulator += adc1_get_raw(Pins::audioAdc);
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        slidingWindowWriteIndex++;
-        slidingWindowWriteIndex %= slidingWindowSize;
+        int redSampleAverage = redSampleAccumulator / (numberOfMeasurementsPerCycle * displaySamplesPerMeasurement);
+        int greenSampleAverage = greenSampleAccumulator / (numberOfMeasurementsPerCycle * displaySamplesPerMeasurement);
+        int blueSampleAverage = blueSampleAccumulator / (numberOfMeasurementsPerCycle * displaySamplesPerMeasurement);
+        audioSampleAccumulator /= numberOfMeasurementsPerCycle;
 
-        screenSwitchAtMcu = gpio_get_level(GPIO_NUM_25);
-        screenSwitchAtRelay = gpio_get_level(GPIO_NUM_26);
-        cameraEnable = gpio_get_level(GPIO_NUM_27);
-
-        int redMovingAverage = 0;
-        int greenMovingAverage = 0;
-        int blueMovingAverage = 0;
-        for (int movingWindowReadIndex = 0; movingWindowReadIndex < slidingWindowSize; movingWindowReadIndex++)
-        {
-            redMovingAverage += redSlidingWindow[movingWindowReadIndex];
-            greenMovingAverage += greenSlidingWindow[movingWindowReadIndex];
-            blueMovingAverage += blueSlidingWindow[movingWindowReadIndex];
+        TickType_t currentTime = xTaskGetTickCount();
+        if (pdTICKS_TO_MS(currentTime - lastLogTime) >= 10000) {
+            lastLogTime = currentTime;
+            ESP_LOGD(
+                _logTag, "R:%04d G:%04d B:%04d A:%04d",
+                redSampleAverage, greenSampleAverage, blueSampleAverage, audioSampleAccumulator
+            );
         }
-        redMovingAverage /= redSampleCount;
-        greenMovingAverage /= greenSampleCount;
-        blueMovingAverage /= blueSampleCount;
-        audio /= audioSampleCount;
-        ESP_LOGD(_logTag, "   %04d    %04d    %04d    %04d", redSampleCount, greenSampleCount, blueSampleCount, audioSampleCount);
-        ESP_LOGD(_logTag, "   %04d    %04d    %04d    %04d    %d    %d    %d", redMovingAverage, greenMovingAverage, blueMovingAverage, audio, screenSwitchAtMcu, screenSwitchAtRelay, cameraEnable);
+    }
+}
 
-        count++;
+void AndroidAutoUnitAssist::ReadDigitalInputsTask(void* pvParameters) {
+    ((AndroidAutoUnitAssist*)pvParameters)->ReadDigitalInputsTask();
+}
+
+void AndroidAutoUnitAssist::ReadDigitalInputsTask() {
+    bool previousUnitScreenSelected = false;
+    bool previousCameraEnabled = false;
+    while (true) {
+        xSemaphoreTake(_processingMutex, portMAX_DELAY);
+        _unitScreenSelected = gpio_get_level(Pins::screenSwitchSelection) == 1;
+        _cameraEnabled = gpio_get_level(Pins::cameraEnable) == 1;
+
+        if (_unitScreenSelected != previousUnitScreenSelected) {
+            ESP_LOGI(_logTag, "Screen switched to %s", _unitScreenSelected ? "unit" : "iDrive");
+        }
+        if (_cameraEnabled != previousCameraEnabled) {
+            ESP_LOGI(_logTag, "Camera is %s", _cameraEnabled ? "enabled" : "disabled");
+        }
+
+        // Check if the screen switches to iDrive while the home button is pressed
+        if (!_unitScreenSelected && previousUnitScreenSelected && _canCoder._iDriveController.homeButton) {
+            _userSwitchedToIDriveScreen = true;
+            ESP_LOGI(_logTag, "User switched to iDrive screen");
+        }
+        else if (_unitScreenSelected) {
+            _userSwitchedToIDriveScreen = false;
+        }
+
+        previousUnitScreenSelected = _unitScreenSelected;
+        previousCameraEnabled = _cameraEnabled;
+
+        xSemaphoreGive(_processingMutex);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -194,97 +197,167 @@ void AndroidAutoUnitAssist::CanReceiveTask(void* pvParameters) {
     AndroidAutoUnitAssist* androidAutoUnitAssist = (AndroidAutoUnitAssist*)pvParameters;
     twai_message_t message;
     while (true) {
-        if (/*ESP_ERROR_CHECK_WITHOUT_ABORT*/(twai_receive(&message, pdMS_TO_TICKS(1000)/*portMAX_DELAY*/)) == ESP_OK) {
+        if (ESP_ERROR_CHECK_WITHOUT_ABORT(twai_receive(&message, portMAX_DELAY)) == ESP_OK) {
             if (!(message.rtr)) {
                 xSemaphoreTake(androidAutoUnitAssist->_processingMutex, portMAX_DELAY);
-                switch (message.data_length_code) {
-                case 0:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX",
-                        message.identifier
-                    );
-                    break;
-                case 1:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X",
-                        message.identifier,
-                        message.data[0]
-                    );
-                    break;
-                case 2:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X %02X",
-                        message.identifier,
-                        message.data[0],
-                        message.data[1]
-                    );
-                    break;
-                case 3:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X %02X %02X",
-                        message.identifier,
-                        message.data[0],
-                        message.data[1],
-                        message.data[2]
-                    );
-                    break;
-                case 4:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X %02X %02X %02X",
-                        message.identifier,
-                        message.data[0],
-                        message.data[1],
-                        message.data[2],
-                        message.data[3]
-                    );
-                    break;
-                case 5:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X %02X %02X %02X %02X",
-                        message.identifier,
-                        message.data[0],
-                        message.data[1],
-                        message.data[2],
-                        message.data[3],
-                        message.data[4]
-                    );
-                    break;
-                case 6:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X %02X %02X %02X %02X %02X",
-                        message.identifier,
-                        message.data[0],
-                        message.data[1],
-                        message.data[2],
-                        message.data[3],
-                        message.data[4],
-                        message.data[5]
-                    );
-                    break;
-                case 7:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X %02X %02X %02X %02X %02X %02X",
-                        message.identifier,
-                        message.data[0],
-                        message.data[1],
-                        message.data[2],
-                        message.data[3],
-                        message.data[4],
-                        message.data[5],
-                        message.data[6]
-                    );
-                    break;
-                case 8:
-                    ESP_LOGI(_logTag, "CAN RX: %03lX: %02X %02X %02X %02X %02X %02X %02X %02X",
-                        message.identifier,
-                        message.data[0],
-                        message.data[1],
-                        message.data[2],
-                        message.data[3],
-                        message.data[4],
-                        message.data[5],
-                        message.data[6],
-                        message.data[7]
-                    );
-                    break;
-                }
+                androidAutoUnitAssist->HandleCanMessage(message);
                 xSemaphoreGive(androidAutoUnitAssist->_processingMutex);
             }
         }
-        else {
-            ESP_LOGD(_logTag, "CanReceiveTask: annoying log to show nothing has been received");
+    }
+}
+
+void AndroidAutoUnitAssist::HandleCanMessage(twai_message_t& message) {
+    if (!_canCoder.Decode(message.identifier, message.data_length_code, message.data)) {
+        return;
+    }
+    switch (_canCoder._identifier) {
+    case CanCoder::Identifier::iDriveControler:
+        ESP_LOGD(_logTag, "CAN RX: %s", _canCoder.RawMessageToString(message.identifier, message.data_length_code, message.data).c_str());
+        ESP_LOGD(_logTag, "=> %s", _canCoder.ToString().c_str());
+        ESP_LOGD(_logTag, "  _iDriveControllerLastDialValue=%d, _canCoder._iDriveController.dialValue=%d, delta=%d", _iDriveControllerLastDialValue, _canCoder._iDriveController.dialValue, _canCoder._iDriveController.dialValue - _iDriveControllerLastDialValue);
+
+        // Correct for dial value wrap around flaw
+        if (_unitScreenSelected) {
+            if (_iDriveControllerLastDialValue == 0 && _canCoder._iDriveController.dialValue == 0xffff) {
+                // The unit does not respond when the dial value wraps around from 0 to 0xffff
+                // We fix this by sending the sequence [1, 0, 0xffff]
+                // Sending 1 wraps the value around in the opposite direction and the unit doesn't respond. Then we send 0
+                // which causes the unit to detect a left turn of the dial (what should have happened in the first place).
+                // Last, we send 0xffff which repeats the original wrap around. There is no response of course, but we now
+                // are at dial value 0xffff again and we made the unit detect one left turn. Further left turns will be
+                // correctly detected.
+                ESP_LOGI(_logTag, "  Dial value wraps around to 0xffff while showing unit's screen, applying downward correction");
+                _canCoder._iDriveController.dialValue = 1;
+                _canCoder.Encode(message.identifier, message.data_length_code, message.data);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&message, 0));
+                ESP_LOGD(_logTag, "  CAN TX: %s", _canCoder.RawMessageToString(message.identifier, message.data_length_code, message.data).c_str());
+                ESP_LOGD(_logTag, "  => %s", _canCoder.ToString().c_str());
+                _canCoder._iDriveController.dialValue = 0;
+                _canCoder.Encode(message.identifier, message.data_length_code, message.data);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&message, 0));
+                ESP_LOGD(_logTag, "  CAN TX: %s", _canCoder.RawMessageToString(message.identifier, message.data_length_code, message.data).c_str());
+                ESP_LOGD(_logTag, "  => %s", _canCoder.ToString().c_str());
+                _canCoder._iDriveController.dialValue = 0xffff;
+                _canCoder.Encode(message.identifier, message.data_length_code, message.data);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&message, 0));
+                ESP_LOGD(_logTag, "  CAN TX: %s", _canCoder.RawMessageToString(message.identifier, message.data_length_code, message.data).c_str());
+                ESP_LOGD(_logTag, "  => %s", _canCoder.ToString().c_str());
+            }
+            else if (_iDriveControllerLastDialValue == 0xffff && _canCoder._iDriveController.dialValue == 0) {
+                // The unit does not respond when the dial value wraps around from 0xffff to 0
+                // We fix this by sending the sequence [0xfffe, 0xffff, 0]
+                // Sending 0xfffe wraps the value around in the opposite direction and the unit doesn't respond. Then we send
+                // 0xffff which causes the unit to detect a right turn of the dial (what should have happened in the first
+                // place). Last, we send 0 which repeats the original wrap around. There is no response of course, but we now
+                // are at dial value 0 again and we made the unit detect one right turn. Further right turns will be
+                // correctly detected.
+                ESP_LOGI(_logTag, "  Dial value wraps around to 0 while showing unit's screen, applying upward correction");
+                _canCoder._iDriveController.dialValue = 0xfffe;
+                _canCoder.Encode(message.identifier, message.data_length_code, message.data);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&message, 0));
+                ESP_LOGD(_logTag, "  CAN TX: %s", _canCoder.RawMessageToString(message.identifier, message.data_length_code, message.data).c_str());
+                ESP_LOGD(_logTag, "  => %s", _canCoder.ToString().c_str());
+                _canCoder._iDriveController.dialValue = 0xffff;
+                _canCoder.Encode(message.identifier, message.data_length_code, message.data);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&message, 0));
+                ESP_LOGD(_logTag, "  CAN TX: %s", _canCoder.RawMessageToString(message.identifier, message.data_length_code, message.data).c_str());
+                ESP_LOGD(_logTag, "  => %s", _canCoder.ToString().c_str());
+                _canCoder._iDriveController.dialValue = 0;
+                _canCoder.Encode(message.identifier, message.data_length_code, message.data);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&message, 0));
+                ESP_LOGD(_logTag, "  CAN TX: %s", _canCoder.RawMessageToString(message.identifier, message.data_length_code, message.data).c_str());
+                ESP_LOGD(_logTag, "  => %s", _canCoder.ToString().c_str());
+            }
         }
+        _iDriveControllerLastDialValue = _canCoder._iDriveController.dialValue;
+        break;
+    default:
+        break;
+    }
+}
+
+void AndroidAutoUnitAssist::ScreenSelectionCorrectionTask(void* pvParameters) {
+    ((AndroidAutoUnitAssist*)pvParameters)->ScreenSelectionCorrectionTask();
+}
+
+void AndroidAutoUnitAssist::ScreenSelectionCorrectionTask() {
+    // Power-on delay
+    vTaskDelay(pdMS_TO_TICKS(5000));
+
+    twai_message_t canMessage;
+    while (true)
+    {
+        // If the unit's screen is not shown and it wasn't caused by the user manually
+        // switching to iDrive mode, send a long press of the home button to switch it back
+        // The unit can be in two types of faulty states:
+        // 1 - the screen is switched to iDrive and the unit is aware of this
+        // 2 - the screen is switched to iDrive while the unit assumes it is displaying Android Auto or CarPlay
+        // If state 2 is the case, a long press will change it to state 1. Then a second long press is
+        // necessary switch the screen to the unit's content. The code below will keep trying until
+        // the screen switches.
+        xSemaphoreTake(_processingMutex, portMAX_DELAY);
+        if (!_unitScreenSelected && !_userSwitchedToIDriveScreen) {
+            ESP_LOGI(_logTag, "Sending home button long press to switch to the unit's screen");
+
+            _canCoder._identifier = CanCoder::Identifier::iDriveControler;
+            _canCoder._iDriveController.homeButton = true;
+            _canCoder.Encode(canMessage.identifier, canMessage.data_length_code, canMessage.data);
+            ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&canMessage, 0));
+            ESP_LOGD(_logTag, "CAN TX: %s", _canCoder.RawMessageToString(canMessage.identifier, canMessage.data_length_code, canMessage.data).c_str());
+            ESP_LOGD(_logTag, "=> %s", _canCoder.ToString().c_str());
+
+            xSemaphoreGive(_processingMutex);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            xSemaphoreTake(_processingMutex, portMAX_DELAY);
+
+            _canCoder._identifier = CanCoder::Identifier::iDriveControler;
+            _canCoder._iDriveController.homeButton = false;
+            _canCoder.Encode(canMessage.identifier, canMessage.data_length_code, canMessage.data);
+            ESP_ERROR_CHECK_WITHOUT_ABORT(twai_transmit(&canMessage, 0));
+            ESP_LOGD(_logTag, "CAN TX: %s", _canCoder.RawMessageToString(canMessage.identifier, canMessage.data_length_code, canMessage.data).c_str());
+            ESP_LOGD(_logTag, "=> %s", _canCoder.ToString().c_str());
+
+            xSemaphoreGive(_processingMutex);
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        else {
+            xSemaphoreGive(_processingMutex);
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+}
+
+void AndroidAutoUnitAssist::CameraScreenControlOverruleTask(void* pvParameters) {
+    ((AndroidAutoUnitAssist*)pvParameters)->CameraScreenControlOverruleTask();
+}
+
+void AndroidAutoUnitAssist::CameraScreenControlOverruleTask() {
+    bool overruleActive = false;
+    while (true) {
+        // If the camera is enabled but the unit's screen is not shown, overrule the screen
+        // switch control. The long press correction to switch the screen takes too long in
+        // this situation. Until that has completed we overrule the switch control.
+        xSemaphoreTake(_processingMutex, portMAX_DELAY);
+        bool overruleRequired = _cameraEnabled && !_unitScreenSelected;
+        xSemaphoreGive(_processingMutex);
+        if (overruleRequired && !overruleActive) {
+            ESP_LOGI(_logTag, "Camera enabled but iDrive screen selected. Overruling screen switch control to show unit's screen");
+            gpio_config_t gpioConfig = {};
+            gpioConfig.pin_bit_mask = 1ULL << Pins::screenSwitchControl;
+            gpioConfig.mode = GPIO_MODE_OUTPUT;
+            gpio_config(&gpioConfig);
+            gpio_set_level(Pins::screenSwitchControl, 1);
+            overruleActive = true;
+        }
+        else if (!overruleRequired && overruleActive) {
+            ESP_LOGI(_logTag, "Screen switch overrule not required anymore");
+            gpio_config_t gpioConfig = {};
+            gpioConfig.pin_bit_mask = 1ULL << Pins::screenSwitchControl;
+            gpioConfig.mode = GPIO_MODE_INPUT;
+            gpio_config(&gpioConfig);
+            overruleActive = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
