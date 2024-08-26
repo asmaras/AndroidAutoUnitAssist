@@ -155,6 +155,7 @@ bool CanCoder::Decode(uint32_t inIdentifier, uint8_t inDataLengthCode, uint8_t* 
             for (int index = 4; index < inDataLengthCode; index++) {
                 _windowRoofAndMirrorControl.additionalData.uncodedData[index - 4] = inData[index];
             }
+            return true;
         }
         break;
     case Identifier::doorLockControl:
@@ -165,6 +166,7 @@ bool CanCoder::Decode(uint32_t inIdentifier, uint8_t inDataLengthCode, uint8_t* 
             for (int index = 4; index < inDataLengthCode; index++) {
                 _doorLockControl.additionalData.uncodedData[index - 4] = inData[index];
             }
+            return true;
         }
         break;
     case Identifier::dateTime:
@@ -195,6 +197,7 @@ bool CanCoder::Decode(uint32_t inIdentifier, uint8_t inDataLengthCode, uint8_t* 
             _passengerSideFrontSeatSeatbeltAndSeatOccupancyStatus.seatbeltFastened = (inData[1] & 0x01) == 0x01;
             // When bits 2, 5 and 6 are 1 the seat is occupied
             _passengerSideFrontSeatSeatbeltAndSeatOccupancyStatus.occupied = (inData[1] & 0x64) == 0x64;
+            return true;
         }
         break;
     case Identifier::doorOpenStatuses:
@@ -211,12 +214,14 @@ bool CanCoder::Decode(uint32_t inIdentifier, uint8_t inDataLengthCode, uint8_t* 
             _doorOpenStatuses.bootIsOpen = (inData[2] & 0x01) != 0;
             // The bonnet open status is in bit 2 of byte 2
             _doorOpenStatuses.bonnetIsOpen = (inData[2] & 0x04) != 0;
+            return true;
         }
         break;
     case Identifier::handbrakeStatus:
         if (inDataLengthCode >= 1) {
             // Bits 0 and 1 of byte 0 are 2 when the handbrake is active
             _handbrakeStatus.handbrakeIsActive = (inData[0] & 0x03) == 0x02;
+            return true;
         }
         break;
     default:
